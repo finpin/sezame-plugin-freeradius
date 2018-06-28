@@ -1,0 +1,8 @@
+{
+    "require": {
+        "finpin/sezame-sdk": "^0.9.0",
+        "monolog/monolog": "^1.22",
+        "respect/config": "^2.0",
+        "vanilla/garden-cli": "^1.6"
+    }
+}

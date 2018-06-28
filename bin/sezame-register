@@ -1,0 +1,66 @@
+#!/usr/bin/php
+<?php
+
+defined('BASE_PATH') || define('BASE_PATH', realpath(__DIR__ . '/..'));
+
+require BASE_PATH . '/vendor/autoload.php';
+
+$client = new \SezameLib\Client();
+
+$registerRequest = $client->register()->setEmail('reg@bretterklieber.com')->setName('freeradius-test');
+
+try {
+
+    /** @var \SezameLib\Response\Register $registerResponse */
+    $registerResponse = $registerRequest->send();
+
+    $clientcode   = $registerResponse->getClientCode();
+    $sharedsecret = $registerResponse->getSharedSecret();
+
+    printf("%s\n%s\n", $clientcode, $sharedsecret);
+
+    $privateKeyPassword = null;
+
+    $csrKey = $client->makeCsr($clientcode, 'reg@bretterklieber.com', $privateKeyPassword,
+        Array(
+            'countryName'            => 'AT',
+            'stateOrProvinceName'    => 'Vienna',
+            'localityName'           => 'Vienna',
+            'organizationName'       => '-',
+            'organizationalUnitName' => '-'
+        ));
+
+    printf("please acknowledge the request using the sezame app, waiting for 30 seconds:\n");
+    $signRequest = $client->sign()->setCSR($csrKey->csr)->setSharedSecret($sharedsecret);
+
+    $timeStarted = time();
+    while (time() - $timeStarted < 30) {
+        try {
+            $signResponse = $signRequest->send();
+
+            $cert = $signResponse->getCertificate();
+
+            printf("Certificate:\n%s\n\n", $cert);
+            printf("Private Key:\n%s\n\n", $csrKey->key);
+            break;
+        } catch (\SezameLib\Exception\Parameter $e) {
+            if ($e->getCode() == 404) {
+                sleep(2);
+                continue;
+            }
+            throw $e;
+        }
+    }
+
+
+} catch (\SezameLib\Exception\Connection $e) {
+    // connection to hq failed
+    printf("Connection failure: %s %d\n", $e->getMessage(), $e->getCode());
+} catch (\SezameLib\Exception\Parameter $e) {
+    // wrong or missing parameter provided
+    print_r($e->getErrorInfo());
+} catch (\SezameLib\Exception\Response $e) {
+    // hq returned unexpected response
+    printf("%s %d\n", $e->getMessage(), $e->getCode());
+}
+

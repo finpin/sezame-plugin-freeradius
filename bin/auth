@@ -1,0 +1,84 @@
+#!/usr/bin/php
+<?php
+
+defined('BASE_PATH') || define('BASE_PATH', realpath(__DIR__ . '/..'));
+
+$mode = getenv('APPLICATION_ENV') ? getenv('APPLICATION_ENV') : 'dev';
+
+require BASE_PATH . '/vendor/autoload.php';
+
+use Garden\Cli\Cli;
+
+
+$iniData1 = parse_ini_file(BASE_PATH . '/conf/auth.ini', true);
+$iniData2 = [];
+$modeini  = sprintf(BASE_PATH . '/conf/auth_%s.ini', $mode);
+if (file_exists($modeini)) {
+    $iniData2 = parse_ini_file($modeini, true);
+}
+
+$config = new \Respect\Config\Container();
+$config->loadArray(array_merge($iniData1, $iniData2));
+
+$logger = new \Monolog\Logger('auth');
+$logger->pushProcessor(new \Monolog\Processor\UidProcessor());
+$logger->pushHandler(new \Monolog\Handler\SyslogHandler($config->logger['ident'], (int)$config->logger['facility'],
+    (int)$config->logger['level']));
+
+$cli = new Cli();
+$cli->opt('username', 'RADIUS user', true)
+    ->opt('nas-ip', 'NAS-IP')
+    ->opt('nas-port', 'NAS-Port');
+
+try {
+    $args = $cli->parse($argv, false);
+
+    $username = $args->getOpt('username');
+
+    $logger->info('started authenticating user: ' . $username);
+
+    $timeout = 20;
+
+    $client = new \SezameLib\Client($config->sezame['certificate'], $config->sezame['privatekey'],
+        $config->sezame['privatekey_password']);
+
+    $authRequest = $client->authorize()->setUsername($username);
+
+    $authResponse = $authRequest->send();
+
+    if ($authResponse->isNotfound()) {
+        $logger->error(sprintf('username: %s not found', $username));
+        die("Reject");
+    }
+
+    if ($authResponse->isOk())
+    {
+        $statusRequest = $client->status()->setAuthId($authResponse->getId());
+
+        for ($i = 0; $i < $timeout; $i++)
+        {
+
+            $statusResponse = $statusRequest->send();
+
+            if ($statusResponse->isAuthorized())
+            {
+                $logger->info(sprintf('username: %s request has been authorized by user', $username));
+                die("Accept");
+            }
+
+            if ($statusResponse->isDenied()) {
+                $logger->info(sprintf('username: %s request has been denied by user', $username));
+                die("Reject");
+            }
+
+            sleep(1);
+        }
+
+        $logger->info(sprintf('username: %s timeout', $username));
+    }
+
+} catch (Exception $e) {
+    $logger->error($e->getMessage());
+}
+
+die("Reject");
